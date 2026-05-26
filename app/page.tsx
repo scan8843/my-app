@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Item } from "@/types/item";
-import ItemRow from "@/components/itemrow";
+import { Item } from "@/app/types/item"
+import ItemRow from "@/app/components/itemrow"
 import { useRouter } from "next/navigation";
 
 export default function Screen1() {
@@ -14,7 +14,7 @@ export default function Screen1() {
   const addItem = () => {
     setItems([
       ...items,
-      { item: "", spec: "", unit: "", qty: 0, unitPrice: 0 }
+      { itemname: "", spec: "", unit: "", qty: 0, unitPrice: 0 }
     ]);
   };
 
@@ -39,7 +39,9 @@ export default function Screen1() {
     if (items.some(it => it.qty <= 0 || it.unitPrice <= 0))
       return alert("수량과 단가는 0보다 커야 합니다");
 
-    router.push("/confirm");
+    const payload = { title, items };
+
+    router.push(`/confirm?data=${encodeURIComponent(JSON.stringify(payload))}`);
   };
 
   return (

@@ -1,57 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { Item } from "@/types/item";
 
-interface ItemRowProps {
+interface Props {
   index: number;
-  item: any;
-  onChange: (index: number, field: string, value: any) => void;
-  onRemove: (index: number) => void;
+  item: Item;
+  onUpdate: (index: number, updated: Partial<Item>) => void;
+  onDelete: (index: number) => void;
 }
 
-export default function ItemRow({ index, item, onChange, onRemove }: ItemRowProps) {
+export default function ItemRow({ index, item, onUpdate, onDelete }: Props) {
   return (
     <div className="grid grid-cols-6 gap-2 mb-2">
       <input
-        className="border p-2"
+        className="border p-1"
         placeholder="품명"
-        value={item.item}
-        onChange={(e) => onChange(index, "item", e.target.value)}
+        value={item.itemname}
+        onChange={e => onUpdate(index, { itemname: e.target.value })}
       />
-
       <input
-        className="border p-2"
+        className="border p-1"
         placeholder="규격"
         value={item.spec}
-        onChange={(e) => onChange(index, "spec", e.target.value)}
+        onChange={e => onUpdate(index, { spec: e.target.value })}
       />
-
       <input
-        className="border p-2"
+        className="border p-1"
         placeholder="단위"
         value={item.unit}
-        onChange={(e) => onChange(index, "unit", e.target.value)}
+        onChange={e => onUpdate(index, { unit: e.target.value })}
       />
-
       <input
+        className="border p-1 text-right"
         type="number"
-        className="border p-2 text-right"
         placeholder="수량"
         value={item.qty}
-        onChange={(e) => onChange(index, "qty", Number(e.target.value))}
+        onChange={e => onUpdate(index, { qty: Number(e.target.value) })}
       />
-
       <input
+        className="border p-1 text-right"
         type="number"
-        className="border p-2 text-right"
         placeholder="단가"
         value={item.unitPrice}
-        onChange={(e) => onChange(index, "unitPrice", Number(e.target.value))}
+        onChange={e => onUpdate(index, { unitPrice: Number(e.target.value) })}
       />
 
       <button
-        onClick={() => onRemove(index)}
-        className="bg-red-500 text-white px-3 rounded"
+        className="bg-red-500 text-white rounded"
+        onClick={() => onDelete(index)}
       >
         삭제
       </button>

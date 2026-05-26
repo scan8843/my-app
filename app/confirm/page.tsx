@@ -41,15 +41,16 @@ export default function Screen2() {
       date,
       approver1: "담당자",
       items: data.items.map((it: any, idx: number) => ({
-        index: idx + 1,
-        item: it.item,
-        spec: it.spec,
-        unit: it.unit,
-        qty: it.qty,
-        unitprice: it.unitPrice,
-        totalprice: it.qty * it.unitPrice,
-        purpose: it.purpose ?? "",
-      })),
+  index: idx + 1,
+  itemname: it.itemname,
+  spec: it.spec,
+  unit: it.unit,
+  qty: it.qty,
+  unitprice: it.unitPrice,
+  totalprice: it.qty * it.unitPrice,
+  purpose: it.purpose ?? "",
+}))
+,
       signature,
     };
 
