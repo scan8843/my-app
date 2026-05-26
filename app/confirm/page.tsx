@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import SignatureCanvas from "react-signature-canvas";
 
 export default function Screen2() {
@@ -16,7 +16,8 @@ export default function Screen2() {
   const [date, setDate] = useState("");
   const [attachment, setAttachment] = useState<File | null>(null);
 
-  let sigPad: SignatureCanvas | null = null;
+  // ⭐ ref 방식으로 변경 (오류 해결)
+  const sigPad = useRef<SignatureCanvas | null>(null);
 
   const total = data.items?.reduce(
     (sum: number, it: any) => sum + it.qty * it.unitPrice,
@@ -27,9 +28,10 @@ export default function Screen2() {
     if (!bank || !account || !owner || !date)
       return alert("모든 정보를 입력하세요");
 
-    const signature = sigPad?.getTrimmedCanvas().toDataURL("image/png");
+    const signature = sigPad.current
+      ?.getTrimmedCanvas()
+      .toDataURL("image/png");
 
-    // Word 템플릿에 들어갈 payload 구성
     const payload = {
       title: data.title,
       totalamount: total,
@@ -37,7 +39,7 @@ export default function Screen2() {
       account,
       owner,
       date,
-      approver1: "담당자", // 필요하면 수정
+      approver1: "담당자",
       items: data.items.map((it: any, idx: number) => ({
         index: idx + 1,
         item: it.item,
@@ -51,7 +53,6 @@ export default function Screen2() {
       signature,
     };
 
-    // API 호출
     const res = await fetch("/api/generate", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -140,8 +141,10 @@ export default function Screen2() {
 
       <div>
         <p className="font-bold mb-1">서명</p>
+
+        {/* ⭐ ref 방식 변경 완료 */}
         <SignatureCanvas
-          ref={(ref) => (sigPad = ref)}
+          ref={sigPad}
           penColor="black"
           canvasProps={{ width: 300, height: 150, className: "border" }}
         />

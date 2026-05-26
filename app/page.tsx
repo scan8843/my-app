@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Item } from "@/types/item";
-import ItemRow from "@/components/ItemRow";
+import ItemRow from "@/components/itemrow";
 import { useRouter } from "next/navigation";
 
 export default function Screen1() {
