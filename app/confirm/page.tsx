@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
 
 export default function Screen2() {
@@ -13,20 +13,28 @@ export default function Screen2() {
   const [bank, setBank] = useState("");
   const [account, setAccount] = useState("");
   const [owner, setOwner] = useState("");
-  const [date, setDate] = useState("");
+
+  const today = new Date(
+    Date.now() - new Date().getTimezoneOffset() * 60000,
+  )
+    .toISOString()
+    .split("T")[0];
+  const [date, setDate] = useState(today);
+
   const [attachment, setAttachment] = useState<File | null>(null);
 
-  // ⭐ ref 방식으로 변경 (오류 해결)
   const sigPad = useRef<SignatureCanvas | null>(null);
 
-  const total = data.items?.reduce(
-    (sum: number, it: any) => sum + it.qty * it.unitPrice,
-    0
-  );
+  const total =
+    data.items?.reduce(
+      (sum: number, it: any) => sum + it.qty * it.unitPrice,
+      0,
+    ) ?? 0;
 
   const submit = async () => {
-    if (!bank || !account || !owner || !date)
+    if (!bank || !account || !owner || !date) {
       return alert("모든 정보를 입력하세요");
+    }
 
     const signature = sigPad.current
       ?.getTrimmedCanvas()
@@ -41,16 +49,15 @@ export default function Screen2() {
       date,
       approver1: "담당자",
       items: data.items.map((it: any, idx: number) => ({
-  index: idx + 1,
-  itemname: it.itemname,
-  spec: it.spec,
-  unit: it.unit,
-  qty: it.qty,
-  unitprice: it.unitPrice,
-  totalprice: it.qty * it.unitPrice,
-  purpose: it.purpose ?? "",
-}))
-,
+        index: idx + 1,
+        itemname: it.itemname,
+        spec: it.spec,
+        unit: it.unit,
+        qty: it.qty,
+        unitprice: it.unitPrice,
+        totalprice: it.qty * it.unitPrice,
+        purpose: it.purpose ?? "",
+      })),
       signature,
     };
 
@@ -69,41 +76,44 @@ export default function Screen2() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="max-w-md mx-auto p-6 space-y-4">
       <h1 className="text-center text-xl font-bold">청구서 확인</h1>
 
-      <div>
-        <label>건명</label>
-        <div className="border p-2">{data.title}</div>
+      <div className="space-y-1">
+        <label className="font-medium">건명</label>
+        <div className="border rounded p-2 bg-gray-50 dark:bg-gray-800 dark:border-gray-600">
+          {data.title}
+        </div>
       </div>
 
-      <div className="border p-2">
-        <div className="grid grid-cols-6 font-bold mb-2">
+      <div className="border rounded p-3 space-y-2 dark:border-gray-600">
+        <div className="grid grid-cols-5 gap-2 text-sm font-bold">
           <div>품명</div>
           <div>규격</div>
           <div>단위</div>
           <div className="text-right">수량</div>
           <div className="text-right">단가</div>
-          <div></div>
         </div>
 
         {data.items?.map((it: any, idx: number) => (
-          <div key={idx} className="grid grid-cols-6 mb-1">
-            <div>{it.item}</div>
+          <div key={idx} className="grid grid-cols-5 gap-2 text-sm">
+            <div>{it.itemname}</div>
             <div>{it.spec}</div>
             <div>{it.unit}</div>
             <div className="text-right">{it.qty}</div>
-            <div className="text-right">{it.unitPrice.toLocaleString()}</div>
+            <div className="text-right">
+              {it.unitPrice?.toLocaleString()}
+            </div>
           </div>
         ))}
       </div>
 
       <div className="text-right font-bold">
-        총 금액: {total?.toLocaleString()}
+        총 금액: {total.toLocaleString()}
       </div>
 
       <select
-        className="border p-2 w-full"
+        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
         value={bank}
         onChange={(e) => setBank(e.target.value)}
       >
@@ -114,14 +124,14 @@ export default function Screen2() {
       </select>
 
       <input
-        className="border p-2 w-full"
+        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
         placeholder="계좌번호 입력"
         value={account}
         onChange={(e) => setAccount(e.target.value)}
       />
 
       <input
-        className="border p-2 w-full"
+        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
         placeholder="계좌주 입력"
         value={owner}
         onChange={(e) => setOwner(e.target.value)}
@@ -129,27 +139,42 @@ export default function Screen2() {
 
       <input
         type="date"
-        className="border p-2 w-full"
+        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
         value={date}
         onChange={(e) => setDate(e.target.value)}
       />
 
       <input
         type="file"
-        className="border p-2 w-full"
+        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
         onChange={(e) => setAttachment(e.target.files?.[0] || null)}
       />
 
-      <div>
-        <p className="font-bold mb-1">서명</p>
+<div className="space-y-2">
+  <p className="font-bold mb-1">서명</p>
 
-        {/* ⭐ ref 방식 변경 완료 */}
-        <SignatureCanvas
-          ref={sigPad}
-          penColor="black"
-          canvasProps={{ width: 300, height: 150, className: "border" }}
-        />
-      </div>
+  <div className="flex gap-2 items-start">
+    <div className="border rounded bg-white inline-block">
+      <SignatureCanvas
+        ref={sigPad}
+        penColor="black"
+        canvasProps={{
+          width: 320,
+          height: 180,
+          className: "rounded",
+        }}
+      />
+    </div>
+
+    <button
+      type="button"
+      onClick={() => sigPad.current?.clear()}
+      className="bg-gray-500 text-white px-3 py-2 rounded whitespace-nowrap"
+    >
+      지우기
+    </button>
+  </div>
+</div>
 
       <button
         onClick={submit}
