@@ -19,9 +19,8 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    
-console.log("=== approver1 ===");
-console.log(body.approver1);
+    console.log("=== attachments ===");
+    console.log(JSON.stringify(body.attachments, null, 2));
 
     const templatePath = path.join(
       process.cwd(),
@@ -30,18 +29,36 @@ console.log(body.approver1);
       "expensetemplate.docx"
     );
 
+    if (!fs.existsSync(templatePath)) {
+      return NextResponse.json(
+        { error: "템플릿 파일을 찾을 수 없습니다." },
+        { status: 500 }
+      );
+    }
+
     const content = fs.readFileSync(templatePath, "binary");
     const zip = new PizZip(content);
 
     const imageOptions = {
       centered: false,
       fileType: "docx",
+
       getImage(tagValue: string) {
         return base64DataURLToBuffer(tagValue);
       },
-      getSize() {
-        // 서명 크기: 필요하면 조정
-        return [90, 45];
+
+      getSize(img: unknown, tagValue: string, tagName: string) {
+        // 서명 크기
+        if (tagName === "approver1") {
+          return [100, 40];
+        }
+
+        // 유첨 이미지 크기
+        return [672, 462];
+      },
+
+      getValue(tagValue: string) {
+        return tagValue;
       },
     };
 
@@ -54,16 +71,26 @@ console.log(body.approver1);
     });
 
     doc.render({
-      title: body.title,
-      totalamount: body.totalamount,
-      totalAmountFormatted: body.totalAmountFormatted,
-      totalAmountKorean: body.totalAmountKorean,
-      bank: body.bank,
-      account: body.account,
-      owner: body.owner,
-      date: body.date,
-      approver1: body.approver1,
-      items: body.items,
+      title: body.title ?? "",
+      totalamount: body.totalamount ?? "",
+      totalAmountFormatted: body.totalAmountFormatted ?? "",
+      totalAmountKorean: body.totalAmountKorean ?? "",
+      bank: body.bank ?? "",
+      account: body.account ?? "",
+      owner: body.owner ?? "",
+      date: body.date
+  ? `${body.date.split("-")[0]}년 ${body.date.split("-")[1]}월 ${body.date.split("-")[2]}일`
+  : "",
+      approver1: body.approver1 ?? "",
+      items: body.items ?? [],
+      attachments:
+        body.attachments?.map(
+          (it: { index: number; type: string; image: string }) => ({
+            index: it.index,
+            type: it.type,
+            image: it.image,
+          })
+        ) ?? [],
     });
 
     const buf = doc.getZip().generate({
@@ -86,4 +113,3 @@ console.log(body.approver1);
     );
   }
 }
-``

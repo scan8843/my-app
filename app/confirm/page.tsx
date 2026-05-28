@@ -18,6 +18,12 @@ type FormData = {
   items?: Item[];
 };
 
+type AttachmentRow = {
+  id: number;
+  type: string;
+  file: File | null;
+};
+
 export default function Screen2() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -35,7 +41,10 @@ export default function Screen2() {
     .split("T")[0];
 
   const [date, setDate] = useState(today);
-  const [attachment, setAttachment] = useState<File | null>(null);
+
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([
+    { id: 1, type: "", file: null },
+  ]);
 
   const sigPad = useRef<SignatureCanvas | null>(null);
 
@@ -88,6 +97,37 @@ export default function Screen2() {
   const totalAmountFormatted = formatKrw(total);
   const totalAmountKorean = numberToKoreanMoney(total);
 
+  const addAttachmentRow = () => {
+    setAttachments((prev) => [
+      ...prev,
+      { id: Date.now(), type: "", file: null },
+    ]);
+  };
+
+  const removeAttachmentRow = (id: number) => {
+    setAttachments((prev) => prev.filter((row) => row.id !== id));
+  };
+
+  const updateAttachmentType = (id: number, value: string) => {
+    setAttachments((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, type: value } : row)),
+    );
+  };
+
+  const updateAttachmentFile = (id: number, file: File | null) => {
+    setAttachments((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, file } : row)),
+    );
+  };
+
+  const fileToDataURL = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
   const submit = async () => {
     if (!bank || !account || !owner || !date) {
       alert("모든 정보를 입력하세요");
@@ -95,14 +135,26 @@ export default function Screen2() {
     }
 
     if (!sigPad.current || sigPad.current.isEmpty()) {
-  alert("서명을 입력하세요");
-  return;
-}
+      alert("서명을 입력하세요");
+      return;
+    }
 
-const signature = sigPad.current
-  .getTrimmedCanvas()
-  .toDataURL("image/png");
+    const signature = sigPad.current
+      .getTrimmedCanvas()
+      .toDataURL("image/png");
 
+    const validAttachments = attachments.filter(
+      (row) => row.type && row.file,
+    );
+
+    const attachmentPayload = await Promise.all(
+      validAttachments.map(async (row, idx) => ({
+        index: idx + 1,
+        type: row.type,
+        name: row.file!.name,
+        image: await fileToDataURL(row.file!),
+      })),
+    );
 
     const payload = {
       title: data.title,
@@ -113,7 +165,7 @@ const signature = sigPad.current
       account,
       owner,
       date,
-      approver1: signature, // 템플릿의 {%approver1} 자리에 이미지로 들어갈 값
+      approver1: signature,
       items:
         data.items?.map((it: Item, idx: number) => ({
           index: idx + 1,
@@ -121,10 +173,11 @@ const signature = sigPad.current
           spec: it.spec,
           unit: it.unit,
           qty: it.qty,
-          unitprice: it.unitPrice,
-          totalprice: it.qty * it.unitPrice,
+          unitprice: `${it.unitPrice.toLocaleString()}원`,
+totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
           purpose: it.purpose ?? "",
         })) ?? [],
+      attachments: attachmentPayload,
     };
 
     const res = await fetch("/api/generate", {
@@ -221,11 +274,75 @@ const signature = sigPad.current
         onChange={(e) => setDate(e.target.value)}
       />
 
-      <input
-        type="file"
-        className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
-        onChange={(e) => setAttachment(e.target.files?.[0] || null)}
-      />
+      {/* 유첨 파일 여러 개 */}
+      <div className="space-y-2">
+        <label className="font-medium">유첨 파일</label>
+
+        {attachments.map((row, idx) => (
+          <div
+            key={row.id}
+            className="border rounded p-3 space-y-2 dark:border-gray-600"
+          >
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-semibold">유첨 {idx + 1}</span>
+              {attachments.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => removeAttachmentRow(row.id)}
+                  className="text-red-500 text-sm"
+                >
+                  삭제
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2 items-center">
+              <select
+                className="border rounded p-2 flex-1 bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
+                value={row.type}
+                onChange={(e) =>
+                  updateAttachmentType(row.id, e.target.value)
+                }
+              >
+                <option value="">유첨 종류 선택</option>
+                <option value="부품사진">부품사진</option>
+                <option value="영수증">영수증</option>
+                <option value="거래명세표">거래명세표</option>
+                <option value="기타">기타</option>
+              </select>
+
+              <label className="bg-gray-600 text-white px-4 py-2 rounded cursor-pointer whitespace-nowrap">
+                파일 선택
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) =>
+                    updateAttachmentFile(
+                      row.id,
+                      e.target.files?.[0] || null,
+                    )
+                  }
+                />
+              </label>
+            </div>
+
+            {row.file && (
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                선택 파일: {row.file.name}
+              </div>
+            )}
+          </div>
+        ))}
+
+        <button
+          type="button"
+          onClick={addAttachmentRow}
+          className="bg-green-600 text-white w-full py-2 rounded"
+        >
+          + 유첨 추가
+        </button>
+      </div>
 
       <div className="space-y-2">
         <p className="font-bold mb-1">서명</p>
