@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "docxtemplater": "^3.68.7",
+    "docxtemplater-image": "^0.1.2",
     "next": "16.2.6",
     "pizzip": "^3.2.0",
     "react": "19.2.4",

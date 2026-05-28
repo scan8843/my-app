@@ -3,12 +3,26 @@ import PizZip from "pizzip";
 import Docxtemplater from "docxtemplater";
 import fs from "fs";
 import path from "path";
+import ImageModule from "docxtemplater-image";
+
+function base64DataURLToBuffer(dataURL: string) {
+  const base64Regex = /^data:image\/(png|jpg|jpeg|svg\+xml);base64,/;
+  if (!base64Regex.test(dataURL)) {
+    throw new Error("지원하지 않는 이미지 형식입니다.");
+  }
+
+  const base64Data = dataURL.replace(base64Regex, "");
+  return Buffer.from(base64Data, "base64");
+}
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    // 템플릿 파일 경로
+    
+console.log("=== approver1 ===");
+console.log(body.approver1);
+
     const templatePath = path.join(
       process.cwd(),
       "public",
@@ -17,24 +31,39 @@ export async function POST(req: Request) {
     );
 
     const content = fs.readFileSync(templatePath, "binary");
-
     const zip = new PizZip(content);
+
+    const imageOptions = {
+      centered: false,
+      fileType: "docx",
+      getImage(tagValue: string) {
+        return base64DataURLToBuffer(tagValue);
+      },
+      getSize() {
+        // 서명 크기: 필요하면 조정
+        return [90, 45];
+      },
+    };
+
+    const imageModule = new ImageModule(imageOptions);
+
     const doc = new Docxtemplater(zip, {
+      modules: [imageModule],
       paragraphLoop: true,
       linebreaks: true,
     });
 
-    // 템플릿에 데이터 주입
     doc.render({
       title: body.title,
       totalamount: body.totalamount,
+      totalAmountFormatted: body.totalAmountFormatted,
+      totalAmountKorean: body.totalAmountKorean,
       bank: body.bank,
       account: body.account,
       owner: body.owner,
       date: body.date,
       approver1: body.approver1,
       items: body.items,
-      signature: body.signature,
     });
 
     const buf = doc.getZip().generate({
@@ -42,7 +71,6 @@ export async function POST(req: Request) {
       compression: "DEFLATE",
     });
 
-    // NextResponse는 Buffer 타입을 직접 받지 못하므로 any로 캐스팅
     return new NextResponse(buf as any, {
       headers: {
         "Content-Type":
@@ -58,3 +86,4 @@ export async function POST(req: Request) {
     );
   }
 }
+``
