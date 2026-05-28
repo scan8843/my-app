@@ -87,7 +87,7 @@ export default function Page() {
       <h1 className="text-center text-xl font-bold">청구서 작성</h1>
 
       <div className="space-y-1">
-        <label className="font-medium">건명</label>
+        <label className="font-medium">청구목적(건명)</label>
         <input
           className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
           placeholder="예: 6월 회식비 등 청구 목적을 작성하세요"
