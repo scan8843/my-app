@@ -29,7 +29,7 @@ type AttachmentRow = {
 };
 
 type FormData = {
-  id?: string; // uuid
+  id?: string;
   title?: string;
   items?: Item[];
   bank?: string;
@@ -61,27 +61,90 @@ export default function ConfirmPage() {
     { id: 1, type: "", file: null },
   ]);
 
-  useEffect(() => {
-    const raw = sessionStorage.getItem("invoiceData");
+  const [normalizedExistingSignature, setNormalizedExistingSignature] =
+    useState("");
 
-    if (!raw) {
-      alert("불러온 문서 데이터가 없습니다.");
-      router.push("/");
+  const getUnitPrice = (it: Item) =>
+    Number(it?.unitPrice ?? it?.unitprice ?? 0);
+
+  const resizeSignature = (dataUrl: string, maxWidth = 140) =>
+  new Promise<string>((resolve) => {
+    if (!dataUrl) {
+      resolve("");
       return;
     }
 
-    try {
-      const parsed: FormData = JSON.parse(raw);
-      setLoadedData(parsed);
-      setBank(parsed.bank || "");
-      setAccount(parsed.account || "");
-      setOwner(parsed.owner || "");
-      setDate(parsed.date || today);
-    } catch (error) {
-      console.error("invoiceData 파싱 오류:", error);
-      alert("문서 데이터를 불러오지 못했습니다.");
-      router.push("/");
-    }
+    const img = new Image();
+
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+
+      const ratio = Math.min(maxWidth / img.width, 1);
+
+      const width = Math.max(1, Math.round(img.width * ratio));
+      const height = Math.max(1, Math.round(img.height * ratio));
+
+      canvas.width = width;
+      canvas.height = height;
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+
+      resolve(canvas.toDataURL("image/png"));
+    };
+
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
+
+  useEffect(() => {
+    const load = async () => {
+      const raw = sessionStorage.getItem("invoiceData");
+
+      if (!raw) {
+        alert("불러온 문서 데이터가 없습니다.");
+        router.push("/");
+        return;
+      }
+
+      try {
+        const parsed: FormData = JSON.parse(raw);
+
+        // 기존 서명이 이미 큰 상태일 수 있으므로 로드시 강제 축소
+        const resizedApprover1 = parsed.approver1
+          ? await resizeSignature(parsed.approver1, 140)
+          : "";
+
+        const normalizedParsed: FormData = {
+          ...parsed,
+          approver1: resizedApprover1,
+        };
+
+        setLoadedData(normalizedParsed);
+        setNormalizedExistingSignature(resizedApprover1);
+
+        setBank(normalizedParsed.bank || "");
+        setAccount(normalizedParsed.account || "");
+        setOwner(normalizedParsed.owner || "");
+        setDate(normalizedParsed.date || today);
+
+        // sessionStorage도 축소된 값으로 즉시 정규화
+        sessionStorage.setItem("invoiceData", JSON.stringify(normalizedParsed));
+      } catch (error) {
+        console.error("invoiceData 파싱 오류:", error);
+        alert("문서 데이터를 불러오지 못했습니다.");
+        router.push("/");
+      }
+    };
+
+    load();
   }, [router, today]);
 
   const handleLogout = async () => {
@@ -89,9 +152,6 @@ export default function ConfirmPage() {
     sessionStorage.removeItem("invoiceData");
     router.push("/");
   };
-
-  const getUnitPrice = (it: any) =>
-    Number(it?.unitPrice ?? it?.unitprice ?? 0);
 
   const total = useMemo(() => {
     return (
@@ -147,7 +207,6 @@ export default function ConfirmPage() {
   const totalAmountKorean = numberToKoreanMoney(total);
 
   const existingAttachments = loadedData?.attachments || [];
-  const existingSignature = loadedData?.approver1 || "";
 
   const addAttachmentRow = () => {
     setAttachments((prev) => [
@@ -180,6 +239,21 @@ export default function ConfirmPage() {
       reader.readAsDataURL(file);
     });
 
+  const clearStoredSignature = () => {
+    if (!loadedData) return;
+
+    const updated = {
+      ...loadedData,
+      approver1: "",
+    };
+
+    setLoadedData(updated);
+    setNormalizedExistingSignature("");
+    sessionStorage.setItem("invoiceData", JSON.stringify(updated));
+
+    alert("기존 저장 서명을 제거했습니다. 새 서명을 입력 후 제출하세요.");
+  };
+
   const submit = async () => {
     if (!loadedData) {
       alert("문서 데이터가 없습니다.");
@@ -191,10 +265,16 @@ export default function ConfirmPage() {
       return;
     }
 
-    const signature =
-      !sigPad.current || sigPad.current.isEmpty()
-        ? existingSignature
-        : sigPad.current.getTrimmedCanvas().toDataURL("image/png");
+    let signature = normalizedExistingSignature;
+
+    // 새 서명을 그린 경우: 무조건 새 서명을 trim + resize
+    if (sigPad.current && !sigPad.current.isEmpty()) {
+      const trimmed = sigPad.current.getTrimmedCanvas().toDataURL("image/png");
+      signature = await resizeSignature(trimmed, 140);
+    } else if (normalizedExistingSignature) {
+      // 기존 서명도 혹시 모르니 제출 직전에 한번 더 보정
+      signature = await resizeSignature(normalizedExistingSignature, 140);
+    }
 
     if (!signature) {
       alert("서명을 입력하세요");
@@ -258,7 +338,6 @@ export default function ConfirmPage() {
       saveError = result.error;
     } else {
       const result = await supabase.from("invoices").insert([payload]);
-
       saveError = result.error;
     }
 
@@ -268,13 +347,15 @@ export default function ConfirmPage() {
       return;
     }
 
-    sessionStorage.setItem(
-      "invoiceData",
-      JSON.stringify({
-        ...loadedData,
-        ...payload,
-      }),
-    );
+    const newStoredData = {
+      ...loadedData,
+      ...payload,
+    };
+
+    setLoadedData(newStoredData);
+    setNormalizedExistingSignature(signature);
+
+    sessionStorage.setItem("invoiceData", JSON.stringify(newStoredData));
 
     const res = await fetch("/api/generate", {
       method: "POST",
@@ -476,9 +557,20 @@ export default function ConfirmPage() {
       <div className="space-y-2">
         <p className="font-bold mb-1">서명</p>
 
-        {existingSignature && (
-          <div className="text-sm text-gray-600 dark:text-gray-300">
-            기존 서명이 저장되어 있습니다. 새로 그리지 않으면 기존 서명이 유지됩니다.
+        {normalizedExistingSignature && (
+          <div className="space-y-2">
+            <div className="text-sm text-gray-600 dark:text-gray-300">
+              기존 서명이 저장되어 있습니다. 새로 그리지 않으면 기존 서명이
+              유지됩니다.
+            </div>
+
+            <button
+              type="button"
+              onClick={clearStoredSignature}
+              className="bg-red-500 text-white px-3 py-2 rounded text-sm"
+            >
+              기존 저장 서명 삭제
+            </button>
           </div>
         )}
 
@@ -488,8 +580,8 @@ export default function ConfirmPage() {
               ref={sigPad}
               penColor="black"
               canvasProps={{
-                width: 320,
-                height: 180,
+                width: 200,
+                height: 90,
                 className: "rounded",
               }}
             />
