@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.106.2",
     "docxtemplater": "^3.68.7",
     "docxtemplater-image": "^0.1.2",
     "next": "16.2.6",

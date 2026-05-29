@@ -1,8 +1,9 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
+import { supabase } from "@/lib/supabaseClient";
 
 type Item = {
   itemname: string;
@@ -28,7 +29,13 @@ export default function Screen2() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const data: FormData = JSON.parse(searchParams.get("data") || "{}");
+  const data: FormData = useMemo(() => {
+    try {
+      return JSON.parse(searchParams.get("data") || "{}");
+    } catch {
+      return {};
+    }
+  }, [searchParams]);
 
   const [bank, setBank] = useState("");
   const [account, setAccount] = useState("");
@@ -65,9 +72,10 @@ export default function Screen2() {
 
     let result = "";
     let unitIndex = 0;
+    let value = num;
 
-    while (num > 0) {
-      const part = num % 10000;
+    while (value > 0) {
+      const part = value % 10000;
 
       if (part > 0) {
         let partStr = "";
@@ -87,7 +95,7 @@ export default function Screen2() {
         result = partStr + units[unitIndex] + result;
       }
 
-      num = Math.floor(num / 10000);
+      value = Math.floor(value / 10000);
       unitIndex++;
     }
 
@@ -143,9 +151,7 @@ export default function Screen2() {
       .getTrimmedCanvas()
       .toDataURL("image/png");
 
-    const validAttachments = attachments.filter(
-      (row) => row.type && row.file,
-    );
+    const validAttachments = attachments.filter((row) => row.type && row.file);
 
     const attachmentPayload = await Promise.all(
       validAttachments.map(async (row, idx) => ({
@@ -157,7 +163,7 @@ export default function Screen2() {
     );
 
     const payload = {
-      title: data.title,
+      title: data.title ?? "",
       totalamount: total,
       totalAmountFormatted,
       totalAmountKorean,
@@ -173,15 +179,32 @@ export default function Screen2() {
           spec: it.spec,
           unit: it.unit,
           qty: it.qty,
-          unitprice: `${it.unitPrice.toLocaleString()}원`,
-totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
+          unitprice: it.unitPrice,
+          totalprice: it.qty * it.unitPrice,
           purpose: it.purpose ?? "",
         })) ?? [],
       attachments: attachmentPayload,
     };
 
+    // 1) Supabase에 먼저 저장 (안전하게 items만 저장)
+    const { error: saveError } = await supabase.from("invoices").insert([
+  {
+    items: payload.items,
+  },
+]);
+
+if (saveError) {
+  console.error("Supabase 에러:", saveError);
+  alert("에러: " + saveError.message);
+  return;
+}
+
+    // 2) 문서 생성 API 호출
     const res = await fetch("/api/generate", {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(payload),
     });
 
@@ -199,6 +222,8 @@ totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
     a.click();
 
     window.URL.revokeObjectURL(url);
+
+    alert("저장 및 문서 생성이 완료되었습니다.");
   };
 
   return (
@@ -227,14 +252,12 @@ totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
             <div>{it.spec}</div>
             <div>{it.unit}</div>
             <div className="text-right">{it.qty}</div>
-            <div className="text-right">
-              {it.unitPrice?.toLocaleString()}
-            </div>
+            <div className="text-right">{it.unitPrice.toLocaleString()}</div>
           </div>
         ))}
       </div>
 
-      <div className="text-right font-bold">
+      <div className="text-right font-bold text-lg">
         총 금액: {total.toLocaleString()}원
       </div>
 
@@ -274,7 +297,6 @@ totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
         onChange={(e) => setDate(e.target.value)}
       />
 
-      {/* 유첨 파일 여러 개 */}
       <div className="space-y-2">
         <label className="font-medium">유첨 파일</label>
 
@@ -300,9 +322,7 @@ totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
               <select
                 className="border rounded p-2 flex-1 bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
                 value={row.type}
-                onChange={(e) =>
-                  updateAttachmentType(row.id, e.target.value)
-                }
+                onChange={(e) => updateAttachmentType(row.id, e.target.value)}
               >
                 <option value="">유첨 종류 선택</option>
                 <option value="부품사진">부품사진</option>
@@ -318,10 +338,7 @@ totalprice: `${(it.qty * it.unitPrice).toLocaleString()}원`,
                   accept="image/*"
                   className="hidden"
                   onChange={(e) =>
-                    updateAttachmentFile(
-                      row.id,
-                      e.target.files?.[0] || null,
-                    )
+                    updateAttachmentFile(row.id, e.target.files?.[0] || null)
                   }
                 />
               </label>
