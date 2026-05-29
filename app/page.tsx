@@ -21,7 +21,7 @@ type StoredAttachment = {
 };
 
 type SavedInvoice = {
-  id: string;
+  id: string; // uuid
   title: string | null;
   date: string | null;
   items: Item[] | null;
@@ -50,12 +50,6 @@ export default function Page() {
   const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>([]);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
 
-  const today = new Date(
-    Date.now() - new Date().getTimezoneOffset() * 60000,
-  )
-    .toISOString()
-    .split("T")[0];
-
   // confirm 페이지로 넘길 기존 문서 메타
   const [loadedMeta, setLoadedMeta] = useState<{
     id?: string;
@@ -67,23 +61,45 @@ export default function Page() {
     approver1?: string;
   }>({});
 
-  useEffect(() => {
-    const loadSavedInvoices = async () => {
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("id, title, date, items, bank, account, owner, attachments, approver1")
-        .order("date", { ascending: false });
+  // 로그인/세션 상태
+  const [session, setSession] = useState<any>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
-      if (error) {
-        console.error("저장 문서 목록 불러오기 오류:", error);
+  const today = new Date(
+    Date.now() - new Date().getTimezoneOffset() * 60000,
+  )
+    .toISOString()
+    .split("T")[0];
+
+  useEffect(() => {
+    const initialize = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+
+      if (!data.session) {
+        setShowAuthModal(true);
         return;
       }
 
-      setSavedInvoices((data as SavedInvoice[]) || []);
+      await loadSavedInvoices();
     };
 
-    loadSavedInvoices();
+    initialize();
   }, []);
+
+  const loadSavedInvoices = async () => {
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("id, title, date, items, bank, account, owner, attachments, approver1")
+      .order("date", { ascending: false });
+
+    if (error) {
+      console.error("저장 문서 목록 불러오기 오류:", error);
+      return;
+    }
+
+    setSavedInvoices((data as SavedInvoice[]) || []);
+  };
 
   const resetForm = () => {
     setSelectedInvoiceId("");
@@ -180,6 +196,11 @@ export default function Page() {
   );
 
   const next = () => {
+    if (!session) {
+      setShowAuthModal(true);
+      return;
+    }
+
     if (!title.trim()) {
       alert("건명을 입력하세요");
       return;
@@ -210,9 +231,35 @@ export default function Page() {
     return `${dateStr} - ${titleStr}`;
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setSession(null);
+    setShowAuthModal(true);
+  };
+
   return (
     <div className="max-w-md mx-auto p-6 space-y-5">
-      <h1 className="text-center text-xl font-bold">청구서 작성</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-center text-xl font-bold">청구서 작성</h1>
+
+        {session ? (
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="bg-gray-700 text-white px-3 py-2 rounded text-sm"
+          >
+            로그아웃
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowAuthModal(true)}
+            className="bg-blue-600 text-white px-3 py-2 rounded text-sm"
+          >
+            로그인
+          </button>
+        )}
+      </div>
 
       {/* 기존 문서 불러오기 */}
       <div className="space-y-2">
@@ -222,6 +269,7 @@ export default function Page() {
             className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
             value={selectedInvoiceId}
             onChange={(e) => handleSelectInvoice(e.target.value)}
+            disabled={!session}
           >
             <option value="">새 문서 작성</option>
             {savedInvoices.map((row) => (
@@ -383,6 +431,117 @@ export default function Page() {
       >
         다음
       </button>
+
+      {showAuthModal && !session && (
+        <AuthModal
+          onClose={() => setShowAuthModal(false)}
+          onLoginSuccess={async () => {
+            const { data } = await supabase.auth.getSession();
+            setSession(data.session);
+            setShowAuthModal(false);
+            await loadSavedInvoices();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AuthModal({
+  onClose,
+  onLoginSuccess,
+}: {
+  onClose: () => void;
+  onLoginSuccess: () => void;
+}) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      alert("이메일과 비밀번호를 입력하세요.");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      alert("로그인 오류: " + error.message);
+      return;
+    }
+
+    alert("로그인 성공");
+    onLoginSuccess();
+  };
+
+  const handleSignup = async () => {
+    if (!email || !password) {
+      alert("이메일과 비밀번호를 입력하세요.");
+      return;
+    }
+
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+    });
+
+    if (error) {
+      alert("회원가입 오류: " + error.message);
+      return;
+    }
+
+    alert("회원가입 완료. 이메일 인증 후 로그인하세요.");
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white text-black p-6 rounded-2xl shadow-xl space-y-3 w-80">
+        <h2 className="text-lg font-bold text-center">
+          {mode === "login" ? "로그인" : "회원가입"}
+        </h2>
+
+        <input
+          className="border p-2 w-full rounded"
+          placeholder="이메일"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+
+        <input
+          type="password"
+          className="border p-2 w-full rounded"
+          placeholder="비밀번호"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+
+        <button
+          onClick={mode === "login" ? handleLogin : handleSignup}
+          className="bg-blue-600 text-white w-full p-2 rounded"
+        >
+          {mode === "login" ? "로그인" : "회원가입"}
+        </button>
+
+        <button
+          onClick={() =>
+            setMode((prev) => (prev === "login" ? "signup" : "login"))
+          }
+          className="text-sm underline w-full"
+        >
+          {mode === "login" ? "회원가입으로 전환" : "로그인으로 전환"}
+        </button>
+
+        <button
+          onClick={onClose}
+          className="bg-gray-500 text-white w-full p-2 rounded"
+        >
+          닫기
+        </button>
+      </div>
     </div>
   );
 }

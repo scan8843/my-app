@@ -10,7 +10,8 @@ type Item = {
   spec: string;
   unit: string;
   qty: number;
-  unitPrice: number;
+  unitPrice?: number;
+  unitprice?: number;
   purpose?: string;
 };
 
@@ -83,10 +84,19 @@ export default function ConfirmPage() {
     }
   }, [router, today]);
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    sessionStorage.removeItem("invoiceData");
+    router.push("/");
+  };
+
+  const getUnitPrice = (it: any) =>
+    Number(it?.unitPrice ?? it?.unitprice ?? 0);
+
   const total = useMemo(() => {
     return (
       loadedData?.items?.reduce(
-        (sum, it) => sum + Number(it.qty) * Number(it.unitPrice),
+        (sum, it) => sum + Number(it?.qty ?? 0) * getUnitPrice(it),
         0,
       ) ?? 0
     );
@@ -207,6 +217,23 @@ export default function ConfirmPage() {
           )
         : existingAttachments;
 
+    const normalizedItems =
+      loadedData.items?.map((it, idx) => {
+        const qty = Number(it?.qty ?? 0);
+        const unitPrice = getUnitPrice(it);
+
+        return {
+          index: idx + 1,
+          itemname: it.itemname || "",
+          spec: it.spec || "",
+          unit: it.unit || "EA(개)",
+          qty,
+          unitprice: unitPrice,
+          totalprice: qty * unitPrice,
+          purpose: it.purpose ?? "",
+        };
+      }) ?? [];
+
     const payload = {
       title: loadedData.title ?? "",
       amount: total,
@@ -216,21 +243,11 @@ export default function ConfirmPage() {
       owner,
       date,
       approver1: signature,
-      items:
-        loadedData.items?.map((it, idx) => ({
-          index: idx + 1,
-          itemname: it.itemname,
-          spec: it.spec,
-          unit: it.unit,
-          qty: it.qty,
-          unitprice: it.unitPrice,
-          totalprice: it.qty * it.unitPrice,
-          purpose: it.purpose ?? "",
-        })) ?? [],
+      items: normalizedItems,
       attachments: attachmentPayload,
     };
 
-    let saveError: Error | null = null;
+    let saveError: any = null;
 
     if (loadedData.id) {
       const result = await supabase
@@ -238,13 +255,11 @@ export default function ConfirmPage() {
         .update(payload)
         .eq("id", loadedData.id);
 
-      saveError = result.error as Error | null;
+      saveError = result.error;
     } else {
-      const result = await supabase
-        .from("invoices")
-        .insert([payload]);
+      const result = await supabase.from("invoices").insert([payload]);
 
-      saveError = result.error as Error | null;
+      saveError = result.error;
     }
 
     if (saveError) {
@@ -253,7 +268,6 @@ export default function ConfirmPage() {
       return;
     }
 
-    // 최신 데이터 다시 sessionStorage에 저장
     sessionStorage.setItem(
       "invoiceData",
       JSON.stringify({
@@ -262,7 +276,6 @@ export default function ConfirmPage() {
       }),
     );
 
-    // 문서 생성 API 호출
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: {
@@ -299,7 +312,17 @@ export default function ConfirmPage() {
 
   return (
     <div className="max-w-md mx-auto p-6 space-y-4">
-      <h1 className="text-center text-xl font-bold">청구서 확인</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-xl font-bold">청구서 확인</h1>
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="bg-gray-700 text-white px-3 py-2 rounded text-sm"
+        >
+          로그아웃
+        </button>
+      </div>
 
       <div className="space-y-1">
         <label className="font-medium">건명</label>
@@ -322,8 +345,10 @@ export default function ConfirmPage() {
             <div>{it.itemname}</div>
             <div>{it.spec}</div>
             <div>{it.unit}</div>
-            <div className="text-right">{it.qty}</div>
-            <div className="text-right">{it.unitPrice.toLocaleString()}</div>
+            <div className="text-right">{Number(it.qty ?? 0)}</div>
+            <div className="text-right">
+              {getUnitPrice(it).toLocaleString()}
+            </div>
           </div>
         ))}
       </div>
@@ -368,7 +393,6 @@ export default function ConfirmPage() {
         onChange={(e) => setDate(e.target.value)}
       />
 
-      {/* 기존 첨부가 있으면 표시 */}
       {existingAttachments.length > 0 && (
         <div className="space-y-2">
           <label className="font-medium">기존 유첨 파일</label>
@@ -385,7 +409,6 @@ export default function ConfirmPage() {
         </div>
       )}
 
-      {/* 새 첨부 추가 */}
       <div className="space-y-2">
         <label className="font-medium">유첨 파일 추가/변경</label>
 
