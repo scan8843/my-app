@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -28,7 +28,7 @@ type AttachmentRow = {
   file: File | null;
 };
 
-type FormData = {
+type InvoiceFormData = {
   id?: string;
   title?: string;
   items?: Item[];
@@ -44,13 +44,14 @@ export default function ConfirmPage() {
   const router = useRouter();
   const sigPad = useRef<SignatureCanvas | null>(null);
 
-  const [loadedData, setLoadedData] = useState<FormData | null>(null);
+  const [loadedData, setLoadedData] = useState<InvoiceFormData | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const today = new Date(
-    Date.now() - new Date().getTimezoneOffset() * 60000,
-  )
-    .toISOString()
-    .split("T")[0];
+  const [today] = useState(() => {
+    return new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+      .toISOString()
+      .split("T")[0];
+  });
 
   const [bank, setBank] = useState("");
   const [account, setAccount] = useState("");
@@ -64,47 +65,54 @@ export default function ConfirmPage() {
   const [normalizedExistingSignature, setNormalizedExistingSignature] =
     useState("");
 
-  const getUnitPrice = (it: Item) =>
-    Number(it?.unitPrice ?? it?.unitprice ?? 0);
+  const getUnitPrice = useCallback((it: Item) => {
+    return Number(it?.unitPrice ?? it?.unitprice ?? 0);
+  }, []);
 
-  const resizeSignature = (dataUrl: string, maxWidth = 140) =>
-  new Promise<string>((resolve) => {
-    if (!dataUrl) {
-      resolve("");
-      return;
-    }
+  const resizeSignature = useCallback(
+    (dataUrl: string, maxWidth = 140) =>
+      new Promise<string>((resolve) => {
+        if (!dataUrl) {
+          resolve("");
+          return;
+        }
 
-    const img = new Image();
+        const img = new Image();
 
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
 
-      if (!ctx) {
-        resolve(dataUrl);
-        return;
-      }
+          if (!ctx) {
+            resolve(dataUrl);
+            return;
+          }
 
-      const ratio = Math.min(maxWidth / img.width, 1);
+          const originalWidth = img.width || 1;
+          const originalHeight = img.height || 1;
+          const ratio = Math.min(maxWidth / originalWidth, 1);
 
-      const width = Math.max(1, Math.round(img.width * ratio));
-      const height = Math.max(1, Math.round(img.height * ratio));
+          const width = Math.max(1, Math.round(originalWidth * ratio));
+          const height = Math.max(1, Math.round(originalHeight * ratio));
 
-      canvas.width = width;
-      canvas.height = height;
+          canvas.width = width;
+          canvas.height = height;
 
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
+          ctx.clearRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
 
-      resolve(canvas.toDataURL("image/png"));
-    };
+          resolve(canvas.toDataURL("image/png"));
+        };
 
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
-
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      }),
+    [],
+  );
 
   useEffect(() => {
+    let mounted = true;
+
     const load = async () => {
       const raw = sessionStorage.getItem("invoiceData");
 
@@ -115,17 +123,18 @@ export default function ConfirmPage() {
       }
 
       try {
-        const parsed: FormData = JSON.parse(raw);
+        const parsed: InvoiceFormData = JSON.parse(raw);
 
-        // 기존 서명이 이미 큰 상태일 수 있으므로 로드시 강제 축소
         const resizedApprover1 = parsed.approver1
           ? await resizeSignature(parsed.approver1, 140)
           : "";
 
-        const normalizedParsed: FormData = {
+        const normalizedParsed: InvoiceFormData = {
           ...parsed,
           approver1: resizedApprover1,
         };
+
+        if (!mounted) return;
 
         setLoadedData(normalizedParsed);
         setNormalizedExistingSignature(resizedApprover1);
@@ -135,7 +144,6 @@ export default function ConfirmPage() {
         setOwner(normalizedParsed.owner || "");
         setDate(normalizedParsed.date || today);
 
-        // sessionStorage도 축소된 값으로 즉시 정규화
         sessionStorage.setItem("invoiceData", JSON.stringify(normalizedParsed));
       } catch (error) {
         console.error("invoiceData 파싱 오류:", error);
@@ -145,7 +153,11 @@ export default function ConfirmPage() {
     };
 
     load();
-  }, [router, today]);
+
+    return () => {
+      mounted = false;
+    };
+  }, [router, resizeSignature, today]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -155,12 +167,11 @@ export default function ConfirmPage() {
 
   const total = useMemo(() => {
     return (
-      loadedData?.items?.reduce(
-        (sum, it) => sum + Number(it?.qty ?? 0) * getUnitPrice(it),
-        0,
-      ) ?? 0
+      loadedData?.items?.reduce((sum, it) => {
+        return sum + Number(it?.qty ?? 0) * getUnitPrice(it);
+      }, 0) ?? 0
     );
-  }, [loadedData]);
+  }, [loadedData, getUnitPrice]);
 
   const formatKrw = (amount: number) => `₩${amount.toLocaleString()}`;
 
@@ -173,7 +184,7 @@ export default function ConfirmPage() {
 
     let result = "";
     let unitIndex = 0;
-    let value = num;
+    let value = Math.floor(num);
 
     while (value > 0) {
       const part = value % 10000;
@@ -211,7 +222,11 @@ export default function ConfirmPage() {
   const addAttachmentRow = () => {
     setAttachments((prev) => [
       ...prev,
-      { id: Date.now(), type: "", file: null },
+      {
+        id: Date.now() + Math.floor(Math.random() * 1000),
+        type: "",
+        file: null,
+      },
     ]);
   };
 
@@ -242,7 +257,7 @@ export default function ConfirmPage() {
   const clearStoredSignature = () => {
     if (!loadedData) return;
 
-    const updated = {
+    const updated: InvoiceFormData = {
       ...loadedData,
       approver1: "",
     };
@@ -255,132 +270,145 @@ export default function ConfirmPage() {
   };
 
   const submit = async () => {
-    if (!loadedData) {
-      alert("문서 데이터가 없습니다.");
+    if (!loadedData || isSubmitting) {
       return;
     }
 
     if (!bank || !account || !owner || !date) {
-      alert("모든 정보를 입력하세요");
+      alert("모든 정보를 입력하세요.");
       return;
     }
 
-    let signature = normalizedExistingSignature;
+    try {
+      setIsSubmitting(true);
 
-    // 새 서명을 그린 경우: 무조건 새 서명을 trim + resize
-    if (sigPad.current && !sigPad.current.isEmpty()) {
-      const trimmed = sigPad.current.getTrimmedCanvas().toDataURL("image/png");
-      signature = await resizeSignature(trimmed, 140);
-    } else if (normalizedExistingSignature) {
-      // 기존 서명도 혹시 모르니 제출 직전에 한번 더 보정
-      signature = await resizeSignature(normalizedExistingSignature, 140);
+      let signature = normalizedExistingSignature;
+
+      if (sigPad.current && !sigPad.current.isEmpty()) {
+        const trimmed = sigPad.current.getTrimmedCanvas().toDataURL("image/png");
+        signature = await resizeSignature(trimmed, 140);
+      } else if (normalizedExistingSignature) {
+        signature = await resizeSignature(normalizedExistingSignature, 140);
+      }
+
+      if (!signature) {
+        alert("서명을 입력하세요.");
+        return;
+      }
+
+      const validAttachments = attachments.filter(
+        (row) => row.type.trim() && row.file,
+      );
+
+      const newAttachments: StoredAttachment[] = await Promise.all(
+        validAttachments.map(async (row, idx) => ({
+          index: existingAttachments.length + idx + 1,
+          type: row.type,
+          name: row.file!.name,
+          image: await fileToDataURL(row.file!),
+        })),
+      );
+
+      const attachmentPayload: StoredAttachment[] =
+        newAttachments.length > 0
+          ? [...existingAttachments, ...newAttachments]
+          : existingAttachments;
+
+      const normalizedItems =
+        loadedData.items?.map((it, idx) => {
+          const qty = Number(it?.qty ?? 0);
+          const unitPrice = getUnitPrice(it);
+
+          return {
+            index: idx + 1,
+            itemname: it.itemname || "",
+            spec: it.spec || "",
+            unit: it.unit || "EA(개)",
+            qty,
+            unitprice: unitPrice,
+            totalprice: qty * unitPrice,
+            purpose: it.purpose ?? "",
+          };
+        }) ?? [];
+
+      const payload = {
+        title: loadedData.title ?? "",
+        amount: total,
+        totalamount: total,
+        bank,
+        account,
+        owner,
+        date,
+        approver1: signature,
+        items: normalizedItems,
+        attachments: attachmentPayload,
+      };
+
+      if (loadedData.id) {
+        const result = await supabase
+          .from("invoices")
+          .update(payload)
+          .eq("id", loadedData.id);
+
+        if (result.error) {
+          console.error("Supabase 에러:", result.error);
+          alert("에러: " + result.error.message);
+          return;
+        }
+      } else {
+        const result = await supabase.from("invoices").insert([payload]);
+
+        if (result.error) {
+          console.error("Supabase 에러:", result.error);
+          alert("에러: " + result.error.message);
+          return;
+        }
+      }
+
+      const newStoredData: InvoiceFormData = {
+        ...loadedData,
+        ...payload,
+      };
+
+      setLoadedData(newStoredData);
+      setNormalizedExistingSignature(signature);
+      sessionStorage.setItem("invoiceData", JSON.stringify(newStoredData));
+
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        alert("문서 생성 중 오류가 발생했습니다.");
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "청구서.docx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      window.URL.revokeObjectURL(url);
+
+      setAttachments([{ id: 1, type: "", file: null }]);
+      sigPad.current?.clear();
+
+      alert("저장 및 문서 생성이 완료되었습니다.");
+    } catch (error) {
+      console.error("제출 중 오류:", error);
+      alert("제출 중 오류가 발생했습니다.");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (!signature) {
-      alert("서명을 입력하세요");
-      return;
-    }
-
-    const validAttachments = attachments.filter(
-      (row) => row.type && row.file,
-    );
-
-    const attachmentPayload: StoredAttachment[] =
-      validAttachments.length > 0
-        ? await Promise.all(
-            validAttachments.map(async (row, idx) => ({
-              index: idx + 1,
-              type: row.type,
-              name: row.file!.name,
-              image: await fileToDataURL(row.file!),
-            })),
-          )
-        : existingAttachments;
-
-    const normalizedItems =
-      loadedData.items?.map((it, idx) => {
-        const qty = Number(it?.qty ?? 0);
-        const unitPrice = getUnitPrice(it);
-
-        return {
-          index: idx + 1,
-          itemname: it.itemname || "",
-          spec: it.spec || "",
-          unit: it.unit || "EA(개)",
-          qty,
-          unitprice: unitPrice,
-          totalprice: qty * unitPrice,
-          purpose: it.purpose ?? "",
-        };
-      }) ?? [];
-
-    const payload = {
-      title: loadedData.title ?? "",
-      amount: total,
-      totalamount: total,
-      bank,
-      account,
-      owner,
-      date,
-      approver1: signature,
-      items: normalizedItems,
-      attachments: attachmentPayload,
-    };
-
-    let saveError: any = null;
-
-    if (loadedData.id) {
-      const result = await supabase
-        .from("invoices")
-        .update(payload)
-        .eq("id", loadedData.id);
-
-      saveError = result.error;
-    } else {
-      const result = await supabase.from("invoices").insert([payload]);
-      saveError = result.error;
-    }
-
-    if (saveError) {
-      console.error("Supabase 에러:", saveError);
-      alert("에러: " + saveError.message);
-      return;
-    }
-
-    const newStoredData = {
-      ...loadedData,
-      ...payload,
-    };
-
-    setLoadedData(newStoredData);
-    setNormalizedExistingSignature(signature);
-
-    sessionStorage.setItem("invoiceData", JSON.stringify(newStoredData));
-
-    const res = await fetch("/api/generate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      alert("문서 생성 중 오류가 발생했습니다.");
-      return;
-    }
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "청구서.docx";
-    a.click();
-
-    window.URL.revokeObjectURL(url);
-
-    alert("저장 및 문서 생성이 완료되었습니다.");
   };
 
   if (!loadedData) {
@@ -480,7 +508,7 @@ export default function ConfirmPage() {
           <div className="space-y-2">
             {existingAttachments.map((att, idx) => (
               <div
-                key={idx}
+                key={`${att.name}-${idx}`}
                 className="border rounded p-2 text-sm dark:border-gray-600"
               >
                 {att.type} - {att.name}
@@ -491,7 +519,7 @@ export default function ConfirmPage() {
       )}
 
       <div className="space-y-2">
-        <label className="font-medium">유첨 파일 추가/변경</label>
+        <label className="font-medium">유첨 파일 추가</label>
 
         {attachments.map((row, idx) => (
           <div
@@ -500,6 +528,7 @@ export default function ConfirmPage() {
           >
             <div className="flex justify-between items-center">
               <span className="text-sm font-semibold">유첨 {idx + 1}</span>
+
               {attachments.length > 1 && (
                 <button
                   type="button"
@@ -528,7 +557,7 @@ export default function ConfirmPage() {
                 파일 선택
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.pdf"
                   className="hidden"
                   onChange={(e) =>
                     updateAttachmentFile(row.id, e.target.files?.[0] || null)
@@ -598,15 +627,23 @@ export default function ConfirmPage() {
       </div>
 
       <button
+        type="button"
         onClick={submit}
-        className="bg-blue-600 text-white w-full py-3 rounded"
+        disabled={isSubmitting}
+        className={`w-full py-3 rounded text-white ${
+          isSubmitting ? "bg-blue-300 cursor-not-allowed" : "bg-blue-600"
+        }`}
       >
-        제출
+        {isSubmitting ? "제출 중..." : "제출"}
       </button>
 
       <button
+        type="button"
         onClick={() => router.back()}
-        className="bg-gray-500 text-white w-full py-3 rounded"
+        disabled={isSubmitting}
+        className={`w-full py-3 rounded text-white ${
+          isSubmitting ? "bg-gray-300 cursor-not-allowed" : "bg-gray-500"
+        }`}
       >
         수정
       </button>
