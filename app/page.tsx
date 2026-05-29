@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabaseClient";
 
 type Item = {
   itemname: string;
@@ -10,6 +11,25 @@ type Item = {
   qty: number;
   unitPrice: number;
   purpose: string;
+};
+
+type StoredAttachment = {
+  index?: number;
+  type: string;
+  name: string;
+  image: string;
+};
+
+type SavedInvoice = {
+  id: string;
+  title: string | null;
+  date: string | null;
+  items: Item[] | null;
+  bank: string | null;
+  account: string | null;
+  owner: string | null;
+  attachments: StoredAttachment[] | null;
+  approver1: string | null;
 };
 
 export default function Page() {
@@ -26,6 +46,103 @@ export default function Page() {
       purpose: "",
     },
   ]);
+
+  const [savedInvoices, setSavedInvoices] = useState<SavedInvoice[]>([]);
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+
+  const today = new Date(
+    Date.now() - new Date().getTimezoneOffset() * 60000,
+  )
+    .toISOString()
+    .split("T")[0];
+
+  // confirm 페이지로 넘길 기존 문서 메타
+  const [loadedMeta, setLoadedMeta] = useState<{
+    id?: string;
+    bank?: string;
+    account?: string;
+    owner?: string;
+    date?: string;
+    attachments?: StoredAttachment[];
+    approver1?: string;
+  }>({});
+
+  useEffect(() => {
+    const loadSavedInvoices = async () => {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("id, title, date, items, bank, account, owner, attachments, approver1")
+        .order("date", { ascending: false });
+
+      if (error) {
+        console.error("저장 문서 목록 불러오기 오류:", error);
+        return;
+      }
+
+      setSavedInvoices((data as SavedInvoice[]) || []);
+    };
+
+    loadSavedInvoices();
+  }, []);
+
+  const resetForm = () => {
+    setSelectedInvoiceId("");
+    setTitle("");
+    setItems([
+      {
+        itemname: "",
+        spec: "",
+        unit: "EA(개)",
+        qty: 1,
+        unitPrice: 0,
+        purpose: "",
+      },
+    ]);
+    setLoadedMeta({});
+  };
+
+  const handleSelectInvoice = async (id: string) => {
+    setSelectedInvoiceId(id);
+
+    if (!id) {
+      resetForm();
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error) {
+      console.error("저장 문서 불러오기 오류:", error);
+      alert("저장 문서를 불러오지 못했습니다.");
+      return;
+    }
+
+    setTitle(data.title || "");
+    setItems(
+      (data.items || []).map((it: any) => ({
+        itemname: it.itemname || "",
+        spec: it.spec || "",
+        unit: it.unit || "EA(개)",
+        qty: Number(it.qty || 1),
+        unitPrice: Number(it.unitprice || it.unitPrice || 0),
+        purpose: it.purpose || "",
+      })),
+    );
+
+    setLoadedMeta({
+      id: data.id,
+      bank: data.bank || "",
+      account: data.account || "",
+      owner: data.owner || "",
+      date: data.date || today,
+      attachments: data.attachments || [],
+      approver1: data.approver1 || "",
+    });
+  };
 
   const addItem = () => {
     setItems((prev) => [
@@ -63,7 +180,6 @@ export default function Page() {
   );
 
   const next = () => {
-    
     if (!title.trim()) {
       alert("건명을 입력하세요");
       return;
@@ -78,13 +194,52 @@ export default function Page() {
       return;
     }
 
-    const data = { title, items };
-    router.push(`/confirm?data=${encodeURIComponent(JSON.stringify(data))}`);
+    const dataToStore = {
+      title,
+      items,
+      ...loadedMeta,
+    };
+
+    sessionStorage.setItem("invoiceData", JSON.stringify(dataToStore));
+    router.push("/confirm");
+  };
+
+  const formatLabel = (row: SavedInvoice) => {
+    const dateStr = row.date || "날짜없음";
+    const titleStr = row.title || "제목 없음";
+    return `${dateStr} - ${titleStr}`;
   };
 
   return (
     <div className="max-w-md mx-auto p-6 space-y-5">
       <h1 className="text-center text-xl font-bold">청구서 작성</h1>
+
+      {/* 기존 문서 불러오기 */}
+      <div className="space-y-2">
+        <label className="font-medium">저장된 문서 불러오기</label>
+        <div className="flex gap-2">
+          <select
+            className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
+            value={selectedInvoiceId}
+            onChange={(e) => handleSelectInvoice(e.target.value)}
+          >
+            <option value="">새 문서 작성</option>
+            {savedInvoices.map((row) => (
+              <option key={row.id} value={row.id}>
+                {formatLabel(row)}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={resetForm}
+            className="px-3 py-2 rounded bg-gray-500 text-white whitespace-nowrap"
+          >
+            초기화
+          </button>
+        </div>
+      </div>
 
       <div className="space-y-1">
         <label className="font-medium">청구목적(건명)</label>
@@ -124,9 +279,7 @@ export default function Page() {
                 className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
                 placeholder="모니터, 마이크 등"
                 value={item.itemname}
-                onChange={(e) =>
-                  updateItem(idx, "itemname", e.target.value)
-                }
+                onChange={(e) => updateItem(idx, "itemname", e.target.value)}
               />
             </div>
 
@@ -171,9 +324,7 @@ export default function Page() {
                   min={1}
                   className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
                   value={item.qty}
-                  onChange={(e) =>
-                    updateItem(idx, "qty", Number(e.target.value))
-                  }
+                  onChange={(e) => updateItem(idx, "qty", Number(e.target.value))}
                 />
               </div>
 
@@ -202,9 +353,7 @@ export default function Page() {
                 className="border rounded p-2 w-full bg-white text-black dark:bg-gray-800 dark:text-white dark:border-gray-600"
                 placeholder="예: 회의용 장비, 행사 진행, 업무용 구매 등"
                 value={item.purpose}
-                onChange={(e) =>
-                  updateItem(idx, "purpose", e.target.value)
-                }
+                onChange={(e) => updateItem(idx, "purpose", e.target.value)}
               />
             </div>
 

@@ -1,7 +1,7 @@
 "use client";
 
-import { useSearchParams, useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -14,9 +14,11 @@ type Item = {
   purpose?: string;
 };
 
-type FormData = {
-  title?: string;
-  items?: Item[];
+type StoredAttachment = {
+  index?: number;
+  type: string;
+  name: string;
+  image: string;
 };
 
 type AttachmentRow = {
@@ -25,21 +27,23 @@ type AttachmentRow = {
   file: File | null;
 };
 
-export default function Screen2() {
+type FormData = {
+  id?: string; // uuid
+  title?: string;
+  items?: Item[];
+  bank?: string;
+  account?: string;
+  owner?: string;
+  date?: string;
+  attachments?: StoredAttachment[];
+  approver1?: string;
+};
+
+export default function ConfirmPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const sigPad = useRef<SignatureCanvas | null>(null);
 
-  const data: FormData = useMemo(() => {
-    try {
-      return JSON.parse(searchParams.get("data") || "{}");
-    } catch {
-      return {};
-    }
-  }, [searchParams]);
-
-  const [bank, setBank] = useState("");
-  const [account, setAccount] = useState("");
-  const [owner, setOwner] = useState("");
+  const [loadedData, setLoadedData] = useState<FormData | null>(null);
 
   const today = new Date(
     Date.now() - new Date().getTimezoneOffset() * 60000,
@@ -47,19 +51,46 @@ export default function Screen2() {
     .toISOString()
     .split("T")[0];
 
+  const [bank, setBank] = useState("");
+  const [account, setAccount] = useState("");
+  const [owner, setOwner] = useState("");
   const [date, setDate] = useState(today);
 
   const [attachments, setAttachments] = useState<AttachmentRow[]>([
     { id: 1, type: "", file: null },
   ]);
 
-  const sigPad = useRef<SignatureCanvas | null>(null);
+  useEffect(() => {
+    const raw = sessionStorage.getItem("invoiceData");
 
-  const total =
-    data.items?.reduce(
-      (sum: number, it: Item) => sum + it.qty * it.unitPrice,
-      0,
-    ) ?? 0;
+    if (!raw) {
+      alert("불러온 문서 데이터가 없습니다.");
+      router.push("/");
+      return;
+    }
+
+    try {
+      const parsed: FormData = JSON.parse(raw);
+      setLoadedData(parsed);
+      setBank(parsed.bank || "");
+      setAccount(parsed.account || "");
+      setOwner(parsed.owner || "");
+      setDate(parsed.date || today);
+    } catch (error) {
+      console.error("invoiceData 파싱 오류:", error);
+      alert("문서 데이터를 불러오지 못했습니다.");
+      router.push("/");
+    }
+  }, [router, today]);
+
+  const total = useMemo(() => {
+    return (
+      loadedData?.items?.reduce(
+        (sum, it) => sum + Number(it.qty) * Number(it.unitPrice),
+        0,
+      ) ?? 0
+    );
+  }, [loadedData]);
 
   const formatKrw = (amount: number) => `₩${amount.toLocaleString()}`;
 
@@ -105,6 +136,9 @@ export default function Screen2() {
   const totalAmountFormatted = formatKrw(total);
   const totalAmountKorean = numberToKoreanMoney(total);
 
+  const existingAttachments = loadedData?.attachments || [];
+  const existingSignature = loadedData?.approver1 || "";
+
   const addAttachmentRow = () => {
     setAttachments((prev) => [
       ...prev,
@@ -137,43 +171,53 @@ export default function Screen2() {
     });
 
   const submit = async () => {
+    if (!loadedData) {
+      alert("문서 데이터가 없습니다.");
+      return;
+    }
+
     if (!bank || !account || !owner || !date) {
       alert("모든 정보를 입력하세요");
       return;
     }
 
-    if (!sigPad.current || sigPad.current.isEmpty()) {
+    const signature =
+      !sigPad.current || sigPad.current.isEmpty()
+        ? existingSignature
+        : sigPad.current.getTrimmedCanvas().toDataURL("image/png");
+
+    if (!signature) {
       alert("서명을 입력하세요");
       return;
     }
 
-    const signature = sigPad.current
-      .getTrimmedCanvas()
-      .toDataURL("image/png");
-
-    const validAttachments = attachments.filter((row) => row.type && row.file);
-
-    const attachmentPayload = await Promise.all(
-      validAttachments.map(async (row, idx) => ({
-        index: idx + 1,
-        type: row.type,
-        name: row.file!.name,
-        image: await fileToDataURL(row.file!),
-      })),
+    const validAttachments = attachments.filter(
+      (row) => row.type && row.file,
     );
 
+    const attachmentPayload: StoredAttachment[] =
+      validAttachments.length > 0
+        ? await Promise.all(
+            validAttachments.map(async (row, idx) => ({
+              index: idx + 1,
+              type: row.type,
+              name: row.file!.name,
+              image: await fileToDataURL(row.file!),
+            })),
+          )
+        : existingAttachments;
+
     const payload = {
-      title: data.title ?? "",
+      title: loadedData.title ?? "",
+      amount: total,
       totalamount: total,
-      totalAmountFormatted,
-      totalAmountKorean,
       bank,
       account,
       owner,
       date,
       approver1: signature,
       items:
-        data.items?.map((it: Item, idx: number) => ({
+        loadedData.items?.map((it, idx) => ({
           index: idx + 1,
           itemname: it.itemname,
           spec: it.spec,
@@ -186,20 +230,39 @@ export default function Screen2() {
       attachments: attachmentPayload,
     };
 
-    // 1) Supabase에 먼저 저장 (안전하게 items만 저장)
-    const { error: saveError } = await supabase.from("invoices").insert([
-  {
-    items: payload.items,
-  },
-]);
+    let saveError: Error | null = null;
 
-if (saveError) {
-  console.error("Supabase 에러:", saveError);
-  alert("에러: " + saveError.message);
-  return;
-}
+    if (loadedData.id) {
+      const result = await supabase
+        .from("invoices")
+        .update(payload)
+        .eq("id", loadedData.id);
 
-    // 2) 문서 생성 API 호출
+      saveError = result.error as Error | null;
+    } else {
+      const result = await supabase
+        .from("invoices")
+        .insert([payload]);
+
+      saveError = result.error as Error | null;
+    }
+
+    if (saveError) {
+      console.error("Supabase 에러:", saveError);
+      alert("에러: " + saveError.message);
+      return;
+    }
+
+    // 최신 데이터 다시 sessionStorage에 저장
+    sessionStorage.setItem(
+      "invoiceData",
+      JSON.stringify({
+        ...loadedData,
+        ...payload,
+      }),
+    );
+
+    // 문서 생성 API 호출
     const res = await fetch("/api/generate", {
       method: "POST",
       headers: {
@@ -226,6 +289,14 @@ if (saveError) {
     alert("저장 및 문서 생성이 완료되었습니다.");
   };
 
+  if (!loadedData) {
+    return (
+      <div className="max-w-md mx-auto p-6">
+        <p>문서 데이터를 불러오는 중...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-md mx-auto p-6 space-y-4">
       <h1 className="text-center text-xl font-bold">청구서 확인</h1>
@@ -233,7 +304,7 @@ if (saveError) {
       <div className="space-y-1">
         <label className="font-medium">건명</label>
         <div className="border rounded p-2 bg-gray-50 dark:bg-gray-800 dark:border-gray-600">
-          {data.title}
+          {loadedData.title}
         </div>
       </div>
 
@@ -246,7 +317,7 @@ if (saveError) {
           <div className="text-right">단가</div>
         </div>
 
-        {data.items?.map((it: Item, idx: number) => (
+        {loadedData.items?.map((it, idx) => (
           <div key={idx} className="grid grid-cols-5 gap-2 text-sm">
             <div>{it.itemname}</div>
             <div>{it.spec}</div>
@@ -297,8 +368,26 @@ if (saveError) {
         onChange={(e) => setDate(e.target.value)}
       />
 
+      {/* 기존 첨부가 있으면 표시 */}
+      {existingAttachments.length > 0 && (
+        <div className="space-y-2">
+          <label className="font-medium">기존 유첨 파일</label>
+          <div className="space-y-2">
+            {existingAttachments.map((att, idx) => (
+              <div
+                key={idx}
+                className="border rounded p-2 text-sm dark:border-gray-600"
+              >
+                {att.type} - {att.name}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 새 첨부 추가 */}
       <div className="space-y-2">
-        <label className="font-medium">유첨 파일</label>
+        <label className="font-medium">유첨 파일 추가/변경</label>
 
         {attachments.map((row, idx) => (
           <div
@@ -363,6 +452,12 @@ if (saveError) {
 
       <div className="space-y-2">
         <p className="font-bold mb-1">서명</p>
+
+        {existingSignature && (
+          <div className="text-sm text-gray-600 dark:text-gray-300">
+            기존 서명이 저장되어 있습니다. 새로 그리지 않으면 기존 서명이 유지됩니다.
+          </div>
+        )}
 
         <div className="flex gap-2 items-start">
           <div className="border rounded bg-white inline-block">
